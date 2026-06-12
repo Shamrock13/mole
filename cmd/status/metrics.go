@@ -215,6 +215,11 @@ type Collector struct {
 	// per cold process.
 	SkipAux bool
 
+	// TopProcessCount caps the top-process list in snapshots. Zero
+	// means the default of 5 (the TUI layout); the GUI requests more
+	// so its process view can expand.
+	TopProcessCount int
+
 	// Static cache.
 	cachedHW  HardwareInfo
 	lastHWAt  time.Time
@@ -454,7 +459,7 @@ func (c *Collector) snapshotFromMetrics(now time.Time, hostInfo *host.InfoStat, 
 	)
 	var topProcs []ProcessInfo
 	if collected.hasProcesses {
-		topProcs = topProcesses(collected.allProcs, 5)
+		topProcs = topProcesses(collected.allProcs, c.topProcessLimit())
 	}
 
 	var processAlerts []ProcessAlert
@@ -499,6 +504,13 @@ func (c *Collector) snapshotFromMetrics(now time.Time, hostInfo *host.InfoStat, 
 		ProcessWatch:  c.processWatch,
 		ProcessAlerts: processAlerts,
 	}
+}
+
+func (c *Collector) topProcessLimit() int {
+	if c.TopProcessCount > 0 {
+		return c.TopProcessCount
+	}
+	return 5
 }
 
 func (c *Collector) hardwareForSnapshot() HardwareInfo {

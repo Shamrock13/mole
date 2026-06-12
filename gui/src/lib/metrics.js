@@ -75,8 +75,11 @@ function adaptMolePayload(state, j) {
   state.memory.usedPercent =
     mem.used_percent ?? (mem.total ? (mem.used / mem.total) * 100 : 0);
 
+  // The collector reports -1 while it has no GPU reading yet;
+  // surface that as "no data", never as a negative percentage.
   const gpu = Array.isArray(j.gpu) && j.gpu.length ? j.gpu[0] : null;
-  state.gpu.usage = gpu?.usage ?? 0;
+  const gpuUsage = gpu?.usage;
+  state.gpu.usage = gpuUsage != null && gpuUsage >= 0 ? gpuUsage : null;
   state.gpu.name = gpu?.name ?? "GPU";
 
   const disks = Array.isArray(j.disks) ? j.disks : [];
@@ -107,7 +110,9 @@ function adaptMolePayload(state, j) {
   state.fans.supported = (j.thermal?.fan_count ?? 0) > 0;
   state.fans.rpm = j.thermal?.fan_speed ?? 0;
 
-  state.topProcesses = (j.top_processes ?? []).slice(0, 6);
+  // Keep everything the collector sends (the GUI requests 20); the
+  // views decide how many to show collapsed vs expanded.
+  state.topProcesses = j.top_processes ?? [];
 }
 
 // ---------------------------------------------------------------

@@ -26,6 +26,7 @@ var (
 	fastJSON         = flag.Bool("fast", false, "JSON mode: skip slow auxiliary collectors (Bluetooth, Trash size, proxy)")
 	watchJSON        = flag.Bool("watch", false, "stream compact JSON snapshots continuously, one per line")
 	watchInterval    = flag.Duration("interval", 2*time.Second, "sampling interval for --watch")
+	topCount         = flag.Int("top", 5, "number of top processes to include in JSON snapshots")
 	procCPUThreshold = flag.Float64("proc-cpu-threshold", 100, "alert when a process stays above this CPU percent")
 	procCPUWindow    = flag.Duration("proc-cpu-window", 5*time.Minute, "continuous duration a process must exceed the CPU threshold")
 	procCPUAlerts    = flag.Bool("proc-cpu-alerts", true, "enable persistent high-CPU process alerts")
@@ -156,6 +157,9 @@ func validateFlags() error {
 	}
 	if *watchInterval < 500*time.Millisecond {
 		return fmt.Errorf("--interval must be >= 500ms")
+	}
+	if *topCount < 1 || *topCount > 100 {
+		return fmt.Errorf("--top must be between 1 and 100")
 	}
 	return nil
 }
@@ -315,6 +319,7 @@ func animTickWithSpeed(cpuUsage float64) tea.Cmd {
 func runJSONMode() {
 	collector := NewCollector(processWatchOptionsFromFlags())
 	collector.SkipAux = *fastJSON
+	collector.TopProcessCount = *topCount
 
 	data, err := collector.Collect()
 	if err != nil {
@@ -338,6 +343,7 @@ func runJSONMode() {
 func runWatchMode() {
 	collector := NewCollector(processWatchOptionsFromFlags())
 	collector.SkipAux = true
+	collector.TopProcessCount = *topCount
 
 	encoder := json.NewEncoder(os.Stdout)
 	// Mirror the TUI cadence: cheap fast+process collection per tick,

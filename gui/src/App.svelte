@@ -40,6 +40,10 @@
 <svelte:window onkeydown={onKeydown} />
 
 <div class="shell">
+  <!-- The window uses an overlay titlebar, so without an explicit
+       drag region there is nothing to grab and the window cannot be
+       moved at all. This strip spans the top, like a native titlebar. -->
+  <div class="titlebar" data-tauri-drag-region></div>
   <Sidebar modules={MODULES} {current} onNavigate={(id) => (current = id)} />
   <main class="stage" aria-live="off">
     <CurrentView />
@@ -50,6 +54,14 @@
   .shell {
     display: flex;
     height: 100%;
+  }
+  .titlebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 36px;
+    z-index: 100;
   }
   .stage {
     flex: 1;

@@ -14,6 +14,14 @@
   } from "../lib/format.js";
 
   let m = $derived($metrics);
+
+  // Collapsed shows a glanceable top slice; expanded shows everything
+  // the collector streams (top 20 by CPU).
+  const COLLAPSED_PROCS = 6;
+  let showAllProcs = $state(false);
+  let visibleProcs = $derived(
+    showAllProcs ? m.topProcesses : m.topProcesses.slice(0, COLLAPSED_PROCS)
+  );
 </script>
 
 <section aria-labelledby="status-title">
@@ -110,11 +118,20 @@
     <article class="glass card processes" aria-labelledby="proc-title">
       <header class="proc-head">
         <h3 id="proc-title" class="caption">Processes · {m.procs}</h3>
-        <span class="dot pulse" aria-hidden="true"></span>
+        {#if m.topProcesses.length > COLLAPSED_PROCS}
+          <button class="proc-toggle" onclick={() => (showAllProcs = !showAllProcs)}>
+            {showAllProcs ? "Show less" : `View all ${m.topProcesses.length}`}
+          </button>
+        {:else}
+          <span class="dot pulse" aria-hidden="true"></span>
+        {/if}
       </header>
-      <ul>
-        {#each m.topProcesses as proc (proc.pid)}
-          <li>
+      <ul class="proc-cols caption" aria-hidden="true">
+        <li><span>Name</span><span class="proc-cpu">CPU</span><span class="proc-mem">Mem</span></li>
+      </ul>
+      <ul class:expanded={showAllProcs}>
+        {#each visibleProcs as proc (proc.pid)}
+          <li title={`PID ${proc.pid}`}>
             <span class="proc-name">{proc.name}</span>
             <span class="proc-cpu mono">{proc.cpu.toFixed(1)}%</span>
             <span class="proc-mem mono">{proc.memory.toFixed(1)}%</span>
@@ -178,12 +195,29 @@
     align-items: center;
     justify-content: space-between;
   }
+  .proc-toggle {
+    font-size: var(--text-xs);
+    font-weight: var(--weight-semibold);
+    color: var(--accent);
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-sm);
+  }
+  .proc-toggle:hover {
+    background: var(--accent-soft);
+  }
+  .proc-cols li {
+    color: var(--ink-tertiary);
+  }
   .processes ul {
     list-style: none;
     padding: 0;
     display: flex;
     flex-direction: column;
     gap: var(--space-2);
+  }
+  .processes ul.expanded {
+    max-height: 320px;
+    overflow-y: auto;
   }
   .processes li {
     display: grid;

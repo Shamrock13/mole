@@ -25,11 +25,13 @@ body {
   user-select: none;
 }
 
-/* Floating translucent panel: the core Liquid Glass surface. */
+/* Floating translucent panel: the core Liquid Glass surface.
+   No per-element backdrop-filter: the native NSVisualEffectView
+   behind the window already blurs the desktop, and stacking a
+   dozen live blur layers in the webview made the whole app
+   sluggish. Translucent fills over the vibrancy keep the look. */
 .glass {
   background: var(--glass-panel);
-  -webkit-backdrop-filter: var(--glass-blur);
-  backdrop-filter: var(--glass-blur);
   border-radius: var(--radius-lg);
   box-shadow:
     inset 0 1px 0 var(--glass-edge),
@@ -39,8 +41,6 @@ body {
 /* Heavier sheet for modals / confirmation views. */
 .glass-raised {
   background: var(--glass-raised);
-  -webkit-backdrop-filter: var(--glass-blur-heavy);
-  backdrop-filter: var(--glass-blur-heavy);
   border-radius: var(--radius-lg);
   box-shadow:
     inset 0 1px 0 var(--glass-edge),
