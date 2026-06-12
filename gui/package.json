@@ -1,0 +1,24 @@
+{
+  "name": "mole-gui",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Liquid Glass desktop front-end for Mole (Tauri 2 + Svelte 5)",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.1.0"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^4.0.0",
+    "@tauri-apps/cli": "^2.1.0",
+    "svelte": "^5.2.0",
+    "vite": "^5.4.0"
+  }
+}
