@@ -60,7 +60,7 @@
     top: 0;
     left: 0;
     right: 0;
-    height: 36px;
+    height: var(--titlebar-height);
     z-index: 100;
   }
   .stage {
@@ -68,5 +68,7 @@
     min-width: 0;
     overflow-y: auto;
     padding: var(--space-5);
+    /* Extra right padding keeps the macOS scrollbar off card shadows. */
+    padding-right: calc(var(--space-5) + 12px);
   }
 </style>

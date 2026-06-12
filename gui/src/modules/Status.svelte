@@ -58,9 +58,10 @@
     <MetricCard
       title="GPU"
       value={formatPercent(m.gpu.usage)}
-      detail={m.gpu.name}
+      detail={m.gpu.usage == null ? `${m.gpu.name} · no reading` : m.gpu.name}
       history={m.gpu.history}
       active={m.gpu.usage > 5}
+      unavailable={m.gpu.usage == null}
     />
 
     <MetricCard
@@ -96,11 +97,14 @@
     <MetricCard
       title="Thermals · Fans"
       value={m.thermal.cpuTemp != null ? `${Math.round(m.thermal.cpuTemp)}°` : "—"}
-      detail={`pressure ${m.thermal.pressure}`}
+      detail={m.thermal.cpuTemp != null
+        ? `pressure ${m.thermal.pressure}`
+        : "Sensor needs admin rights"}
       history={m.thermal.history}
       min={20}
       max={100}
       active={m.thermal.pressure !== "nominal"}
+      unavailable={m.thermal.cpuTemp == null}
     >
       {#snippet children()}
         <FanModeControl supported={m.fans.supported} rpm={m.fans.rpm} />
@@ -111,7 +115,7 @@
       title="Uptime"
       value={formatUptime(m.uptimeSeconds)}
       detail={m.hardware.os_version || ""}
-      history={m.cpu.history}
+      history={[]}
       active={false}
     />
 

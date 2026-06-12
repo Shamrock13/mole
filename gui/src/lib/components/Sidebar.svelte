@@ -48,7 +48,7 @@
     gap: var(--space-2);
     /* Top padding clears the traffic lights, which the overlay
        titlebar places over the sidebar's top-left corner. */
-    padding: 36px var(--space-3) var(--space-5);
+    padding: var(--titlebar-height) var(--space-3) var(--space-5);
     font-weight: var(--weight-bold);
     font-size: var(--text-md);
   }
@@ -99,10 +99,14 @@
   }
   .tagline {
     font-size: var(--text-xs);
-    color: var(--ink-tertiary);
     white-space: nowrap;
     overflow: hidden;
-    text-overflow: ellipsis;
+    /* Long taglines dissolve instead of breaking off at an ellipsis. */
+    background: linear-gradient(90deg, var(--ink-tertiary) 0%, var(--ink-tertiary) 70%, transparent 96%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    color: var(--ink-tertiary);
   }
   footer {
     margin-top: auto;

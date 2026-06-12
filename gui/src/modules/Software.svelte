@@ -94,6 +94,7 @@
               <span class="name">{app.name}</span>
               <span class="source" class:brew={app.source === "Homebrew"}>{app.source}</span>
               <span class="size mono">{app.size}</span>
+              <span class="chev" class:open={expanded === app.path} aria-hidden="true">›</span>
             </button>
             {#if expanded === app.path}
               <div class="detail glass-inset">
@@ -180,13 +181,26 @@
   }
   .row {
     display: grid;
-    grid-template-columns: 1fr auto 84px;
+    grid-template-columns: 1fr auto 84px 14px;
     gap: var(--space-3);
     align-items: center;
     width: 100%;
     text-align: left;
     padding: var(--space-2);
     border-radius: var(--radius-sm);
+  }
+  .chev {
+    color: var(--ink-tertiary);
+    opacity: 0;
+    transition: transform var(--duration-fast) var(--ease-out), opacity var(--duration-fast) var(--ease-out);
+  }
+  .row:hover .chev,
+  .chev.open {
+    opacity: 1;
+  }
+  .chev.open {
+    color: var(--accent);
+    transform: rotate(90deg);
   }
   .row:hover,
   .row.open {

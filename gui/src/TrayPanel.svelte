@@ -152,7 +152,7 @@
     gap: var(--space-3);
   }
   .tile, .wide {
-    padding: var(--space-3);
+    padding: var(--space-4);
     display: flex;
     flex-direction: column;
     gap: var(--space-2);

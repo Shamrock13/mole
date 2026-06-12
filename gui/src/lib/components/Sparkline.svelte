@@ -63,6 +63,9 @@
     display: block;
     overflow: visible;
   }
+  .sparkline:empty {
+    opacity: 0.3;
+  }
   .area {
     fill: var(--accent-soft);
     stroke: none;

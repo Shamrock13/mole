@@ -11,11 +11,12 @@
     max = 100,
     min = 0,
     active = false,
+    unavailable = false,
     children,
   } = $props();
 </script>
 
-<article class="glass card" aria-label={`${title}: ${value}`}>
+<article class="glass card" class:unavailable aria-label={`${title}: ${value}`}>
   <header>
     <h3 class="caption">{title}</h3>
     {#if active}
@@ -63,10 +64,22 @@
     font-weight: var(--weight-semibold);
     letter-spacing: var(--tracking-tight);
   }
+  /* No-data cards read as quiet, not broken: muted value, faded track. */
+  .card.unavailable .value {
+    color: var(--ink-tertiary);
+    opacity: 0.55;
+  }
+  .card.unavailable .spark {
+    opacity: 0.45;
+  }
   .detail {
     font-size: var(--text-xs);
     color: var(--ink-secondary);
     margin-top: calc(var(--space-1) * -1);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
   }
   .spark {
     padding: var(--space-2) var(--space-3);

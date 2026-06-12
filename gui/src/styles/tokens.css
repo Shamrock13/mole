@@ -5,6 +5,9 @@
    ============================================================ */
 
 :root {
+  /* Overlay titlebar / traffic-light clearance. */
+  --titlebar-height: 36px;
+
   /* -- Typography: SF on macOS, Inter elsewhere ------------- */
   --font-sans:
     -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter",
