@@ -24,6 +24,8 @@ var (
 	// Command-line flags
 	jsonOutput       = flag.Bool("json", false, "output metrics as JSON instead of TUI")
 	fastJSON         = flag.Bool("fast", false, "JSON mode: skip slow auxiliary collectors (Bluetooth, Trash size, proxy)")
+	watchJSON        = flag.Bool("watch", false, "stream compact JSON snapshots continuously, one per line")
+	watchInterval    = flag.Duration("interval", 2*time.Second, "sampling interval for --watch")
 	procCPUThreshold = flag.Float64("proc-cpu-threshold", 100, "alert when a process stays above this CPU percent")
 	procCPUWindow    = flag.Duration("proc-cpu-window", 5*time.Minute, "continuous duration a process must exceed the CPU threshold")
 	procCPUAlerts    = flag.Bool("proc-cpu-alerts", true, "enable persistent high-CPU process alerts")
@@ -151,6 +153,9 @@ func validateFlags() error {
 	}
 	if *procCPUWindow <= 0 {
 		return fmt.Errorf("--proc-cpu-window must be > 0")
+	}
+	if *watchInterval < 500*time.Millisecond {
+		return fmt.Errorf("--interval must be >= 500ms")
 	}
 	return nil
 }
@@ -325,6 +330,39 @@ func runJSONMode() {
 	}
 }
 
+// runWatchMode streams compact JSON snapshots, one per line, from a
+// single long-lived collector. Long-running consumers (the GUI) read
+// this instead of spawning a cold one-shot process per sample: warm
+// caches make each tick cheap, and the persistent collector produces
+// real network and disk IO rates, which one-shot runs cannot.
+func runWatchMode() {
+	collector := NewCollector(processWatchOptionsFromFlags())
+	collector.SkipAux = true
+
+	encoder := json.NewEncoder(os.Stdout)
+	// Mirror the TUI cadence: cheap fast+process collection per tick,
+	// full refresh (GPU, battery, thermal, corrected disks) every 30s
+	// merged from the enrichment cache in between.
+	fullEvery := max(1, int(slowRefreshInterval / *watchInterval))
+	for tick := 0; ; tick++ {
+		var data MetricsSnapshot
+		var err error
+		if tick%fullEvery == 0 {
+			data, err = collector.Collect()
+		} else {
+			data, err = collector.CollectProcesses()
+		}
+		if err == nil {
+			// A write error means the consumer is gone; exit so no
+			// orphaned collector keeps sampling forever.
+			if err := encoder.Encode(data); err != nil {
+				os.Exit(0)
+			}
+		}
+		time.Sleep(*watchInterval)
+	}
+}
+
 // runTUIMode runs the interactive terminal UI.
 func runTUIMode() {
 	p := tea.NewProgram(newModel(), tea.WithAltScreen())
@@ -341,7 +379,9 @@ func main() {
 		os.Exit(2)
 	}
 
-	if shouldUseJSONOutput(*jsonOutput, os.Stdout) {
+	if *watchJSON {
+		runWatchMode()
+	} else if shouldUseJSONOutput(*jsonOutput, os.Stdout) {
 		runJSONMode()
 	} else {
 		runTUIMode()

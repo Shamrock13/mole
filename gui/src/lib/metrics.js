@@ -5,14 +5,17 @@
 // runs outside Tauri (plain `vite dev` in a browser) a lightweight
 // simulator produces the same shape so the UI stays workable.
 //
-// Each metric keeps a 60-sample ring buffer (1 sample/second) that
-// feeds the sparklines. Polling pauses automatically when the window
-// is hidden to keep idle CPU near zero.
+// Each metric keeps a 60-sample ring buffer (1 sample per 2-second
+// tick) that feeds the sparklines. Polling pauses automatically when
+// the window is hidden to keep idle CPU near zero.
 
 import { readable, writable } from "svelte/store";
 
 const HISTORY = 60;
-const TICK_MS = 1000;
+// Matches the --watch sampling interval in the Rust shell: the
+// backend snapshot only changes every 2s, so polling faster just
+// re-renders identical data.
+const TICK_MS = 2000;
 
 function ring() {
   return new Array(HISTORY).fill(null);
@@ -192,15 +195,19 @@ export const metrics = readable(emptyState(), (set) => {
   async function tick() {
     t += 1;
     if (inTauri()) {
+      // Never simulate inside the app: while the stream warms up (or
+      // recovers) keep the last real data and show "connecting"
+      // rather than plausible-looking fake numbers.
       try {
         adaptMolePayload(state, await fetchMoleStatus());
+        recordHistory(state);
       } catch {
-        simulate(state, t);
+        state.live = false;
       }
     } else {
       simulate(state, t);
+      recordHistory(state);
     }
-    recordHistory(state);
     set({ ...state });
   }
 

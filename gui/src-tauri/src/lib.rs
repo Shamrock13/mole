@@ -7,8 +7,10 @@
 //! (mole_delete, should_protect_path, operation logs) lives.
 
 use std::ffi::OsStr;
+use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -41,6 +43,23 @@ impl Default for TrayState {
 /// instantly reopen the panel and it could never be toggled closed.
 #[derive(Default)]
 struct PanelHiddenAt(Mutex<Option<Instant>>);
+
+/// Live metrics from one long-lived `mole-status --watch` process.
+/// One-shot collection per poll cold-started a dozen subprocesses
+/// (ioreg, pmset, powermetrics, process scans) every tick and burned
+/// constant CPU; the persistent collector keeps its caches warm and
+/// makes each sample cheap, with real network and disk IO rates.
+#[derive(Default)]
+struct StatusStream {
+    latest: Mutex<Option<(Instant, String)>>,
+    child: Mutex<Option<Child>>,
+    shutdown: AtomicBool,
+}
+
+/// How stale a streamed snapshot may be before the front-end is told
+/// to wait instead. Samples arrive every 2s, so 15s means the
+/// collector died and the respawn loop has not recovered yet.
+const STREAM_STALE_AFTER: Duration = Duration::from_secs(15);
 
 fn run_capture(program: &OsStr, args: &[&str]) -> Result<String, String> {
     let output = Command::new(program)
@@ -83,11 +102,83 @@ fn collect_status_json() -> Result<String, String> {
         .or_else(|_| run_capture(OsStr::new("/usr/local/bin/mo"), &["status", "--json"]))
 }
 
-/// Async so collection runs off the main thread: a sync Tauri command
-/// executes on the UI thread, and the collector takes seconds per
-/// sample. That blocked the whole app behind a beachball.
+fn fresh_stream_snapshot(stream: &StatusStream) -> Option<String> {
+    let guard = stream.latest.lock().ok()?;
+    match &*guard {
+        Some((at, line)) if at.elapsed() < STREAM_STALE_AFTER => Some(line.clone()),
+        _ => None,
+    }
+}
+
+/// Reads NDJSON snapshots from the watch process into StatusStream,
+/// respawning the collector with a short backoff if it dies. Ends
+/// when the app shuts down.
+fn spawn_status_stream(app: AppHandle) {
+    let Some(bin) = bundled_status() else {
+        return; // dev / CLI installs poll one-shot via fallback
+    };
+    std::thread::spawn(move || {
+        let stream = app.state::<StatusStream>();
+        while !stream.shutdown.load(Ordering::Relaxed) {
+            let spawned = Command::new(&bin)
+                .args(["--watch", "--interval", "2s"])
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .stdin(Stdio::null())
+                .spawn();
+            let Ok(mut child) = spawned else {
+                break;
+            };
+            let stdout = child.stdout.take();
+            if let Ok(mut slot) = stream.child.lock() {
+                *slot = Some(child);
+            }
+            if let Some(stdout) = stdout {
+                for line in BufReader::new(stdout).lines() {
+                    let Ok(line) = line else { break };
+                    if line.trim().is_empty() {
+                        continue;
+                    }
+                    if let Ok(mut latest) = stream.latest.lock() {
+                        *latest = Some((Instant::now(), line));
+                    }
+                }
+            }
+            // Stream ended: reap the child, then retry unless quitting.
+            if let Ok(mut slot) = stream.child.lock() {
+                if let Some(mut child) = slot.take() {
+                    let _ = child.wait();
+                }
+            }
+            if stream.shutdown.load(Ordering::Relaxed) {
+                break;
+            }
+            std::thread::sleep(Duration::from_secs(2));
+        }
+    });
+}
+
+fn stop_status_stream(app: &AppHandle) {
+    let stream = app.state::<StatusStream>();
+    stream.shutdown.store(true, Ordering::Relaxed);
+    if let Ok(mut slot) = stream.child.lock() {
+        if let Some(mut child) = slot.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    };
+}
+
+/// The front-end polls this; with the stream running it is a cheap
+/// in-memory read. The one-shot fallback (off the main thread) only
+/// runs when there is no bundled collector, e.g. dev builds talking
+/// to a system-wide `mo`.
 #[tauri::command]
-async fn mole_status() -> Result<String, String> {
+async fn mole_status(app: AppHandle) -> Result<String, String> {
+    if bundled_status().is_some() {
+        return fresh_stream_snapshot(&app.state::<StatusStream>())
+            .ok_or_else(|| "status stream warming up".into());
+    }
     tauri::async_runtime::spawn_blocking(collect_status_json)
         .await
         .map_err(|e| format!("status task failed: {e}"))?
@@ -194,9 +285,9 @@ fn toggle_tray_panel(app: &AppHandle, rect: tauri::Rect) {
     let _ = panel.set_focus();
 }
 
-/// Background refresher for the menu bar title (e.g. "37%"). Only does
-/// work while the metrics display mode is on; the default icon-only
-/// mode costs nothing.
+/// Background refresher for the menu bar title (e.g. "37%"). Reads the
+/// already-streamed snapshot, so it never spawns anything; idle in the
+/// default icon-only mode.
 fn spawn_tray_title_updater(app: AppHandle) {
     std::thread::spawn(move || loop {
         std::thread::sleep(TRAY_TITLE_INTERVAL);
@@ -214,8 +305,7 @@ fn spawn_tray_title_updater(app: AppHandle) {
         let Some(tray) = app.tray_by_id(TRAY_ID) else {
             continue;
         };
-        let title = collect_status_json()
-            .ok()
+        let title = fresh_stream_snapshot(&app.state::<StatusStream>())
             .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
             .and_then(|v| v.pointer("/cpu/usage").and_then(|u| u.as_f64()))
             .map(|usage| format!("{}%", usage.round() as i64));
@@ -260,6 +350,7 @@ pub fn run() {
     tauri::Builder::default()
         .manage(Mutex::new(TrayState::default()))
         .manage(PanelHiddenAt::default())
+        .manage(StatusStream::default())
         .invoke_handler(tauri::generate_handler![
             mole_status,
             set_fan_mode,
@@ -325,9 +416,18 @@ pub fn run() {
                 });
             }
 
+            spawn_status_stream(app.handle().clone());
             spawn_tray_title_updater(app.handle().clone());
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running Mole GUI");
+        .build(tauri::generate_context!())
+        .expect("error while building Mole GUI")
+        .run(|app, event| {
+            // The watch collector writes every 2s and exits on EPIPE,
+            // but kill it explicitly so quitting never leaves even a
+            // short-lived orphan sampling the system.
+            if let tauri::RunEvent::Exit = event {
+                stop_status_stream(app);
+            }
+        });
 }
