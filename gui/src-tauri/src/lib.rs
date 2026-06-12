@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Manager, PhysicalPosition, WindowEvent};
+use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, WindowEvent};
 
 const TRAY_ID: &str = "mole-tray";
 const TRAY_TITLE_INTERVAL: Duration = Duration::from_secs(10);
@@ -60,6 +60,71 @@ struct StatusStream {
 /// to wait instead. Samples arrive every 2s, so 15s means the
 /// collector died and the respawn loop has not recovered yet.
 const STREAM_STALE_AFTER: Duration = Duration::from_secs(15);
+
+/// One Mole CLI task at a time, streamed to the front-end as events.
+/// The GUI never deletes anything itself: tasks are a fixed allowlist
+/// of `mo` invocations, so all destructive logic stays in the audited
+/// shell pipeline (mole_delete, should_protect_path, operation logs).
+#[derive(Default)]
+struct MoleTask {
+    running: Mutex<Option<String>>,
+    child: Mutex<Option<Child>>,
+}
+
+/// The `mo` subcommand for each GUI task. Preview tasks are dry-run
+/// only; "clean" is the one real mutation and the front-end gates it
+/// behind an explicit confirmation sheet.
+fn mole_task_args(task: &str) -> Option<&'static [&'static str]> {
+    match task {
+        "clean-preview" => Some(&["clean", "--dry-run"]),
+        "clean" => Some(&["clean"]),
+        "optimize-preview" => Some(&["optimize", "--dry-run"]),
+        _ => None,
+    }
+}
+
+/// Locates a system-wide Mole CLI. GUI apps do not inherit the shell
+/// PATH, so check the standard install locations before falling back
+/// to whatever PATH the app did get.
+fn resolve_mo() -> Option<PathBuf> {
+    for fixed in ["/opt/homebrew/bin/mo", "/usr/local/bin/mo"] {
+        let path = PathBuf::from(fixed);
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+    let paths = std::env::var_os("PATH")?;
+    std::env::split_paths(&paths)
+        .map(|dir| dir.join("mo"))
+        .find(|cand| cand.is_file())
+}
+
+/// Drops ANSI escape sequences and carriage returns so shell output
+/// renders cleanly in the GUI console.
+fn strip_ansi(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut chars = line.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\u{1b}' => {
+                if chars.peek() == Some(&'[') {
+                    chars.next();
+                    // CSI: parameters end at the first alphabetic byte.
+                    for esc in chars.by_ref() {
+                        if esc.is_ascii_alphabetic() {
+                            break;
+                        }
+                    }
+                } else {
+                    chars.next();
+                }
+            }
+            '\r' => {}
+            _ => out.push(ch),
+        }
+    }
+    out
+}
 
 fn run_capture(program: &OsStr, args: &[&str]) -> Result<String, String> {
     let output = Command::new(program)
@@ -182,6 +247,133 @@ async fn mole_status(app: AppHandle) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(collect_status_json)
         .await
         .map_err(|e| format!("status task failed: {e}"))?
+}
+
+/// Whether a system-wide Mole CLI is installed (and where). The Clean,
+/// Software, and Optimize modules need it; the DMG alone only bundles
+/// the status collector.
+#[tauri::command]
+fn mole_cli_path() -> Option<String> {
+    resolve_mo().map(|p| p.to_string_lossy().into_owned())
+}
+
+/// Installed-app inventory via `mo uninstall --list`, a guaranteed
+/// read-only path that emits JSON when piped. Returns the raw JSON.
+#[tauri::command]
+async fn list_installed_apps() -> Result<String, String> {
+    let mo = resolve_mo().ok_or("Mole CLI not installed")?;
+    tauri::async_runtime::spawn_blocking(move || {
+        run_capture(mo.as_os_str(), &["uninstall", "--list"])
+    })
+    .await
+    .map_err(|e| format!("list task failed: {e}"))?
+}
+
+/// Starts an allowlisted Mole CLI task and streams its output to the
+/// front-end as `mole-task-output` events, ending with
+/// `mole-task-done`. Output is line-buffered and ANSI-stripped.
+#[tauri::command]
+fn run_mole_task(app: AppHandle, task: String) -> Result<(), String> {
+    let Some(args) = mole_task_args(&task) else {
+        return Err(format!("unknown task: {task}"));
+    };
+    let mo = resolve_mo().ok_or("Mole CLI not installed")?;
+
+    let state = app.state::<MoleTask>();
+    {
+        let mut running = state.running.lock().map_err(|e| e.to_string())?;
+        if let Some(active) = &*running {
+            return Err(format!("a task is already running: {active}"));
+        }
+        *running = Some(task.clone());
+    }
+
+    let spawned = Command::new(&mo)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn();
+    let mut child = match spawned {
+        Ok(child) => child,
+        Err(e) => {
+            if let Ok(mut running) = state.running.lock() {
+                *running = None;
+            }
+            return Err(format!("failed to launch mo: {e}"));
+        }
+    };
+
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    if let Ok(mut slot) = state.child.lock() {
+        *slot = Some(child);
+    }
+
+    let spawn_reader = |stream: Option<Box<dyn std::io::Read + Send>>, app: AppHandle, task: String| {
+        std::thread::spawn(move || {
+            let Some(stream) = stream else { return };
+            for line in BufReader::new(stream).lines() {
+                let Ok(line) = line else { break };
+                let clean = strip_ansi(&line);
+                if clean.trim().is_empty() {
+                    continue;
+                }
+                let _ = app.emit(
+                    "mole-task-output",
+                    serde_json::json!({ "task": task, "line": clean }),
+                );
+            }
+        })
+    };
+    let out_reader = spawn_reader(
+        stdout.map(|s| Box::new(s) as Box<dyn std::io::Read + Send>),
+        app.clone(),
+        task.clone(),
+    );
+    let err_reader = spawn_reader(
+        stderr.map(|s| Box::new(s) as Box<dyn std::io::Read + Send>),
+        app.clone(),
+        task.clone(),
+    );
+
+    std::thread::spawn(move || {
+        let _ = out_reader.join();
+        let _ = err_reader.join();
+        let state = app.state::<MoleTask>();
+        let code = {
+            let mut slot = match state.child.lock() {
+                Ok(slot) => slot,
+                Err(_) => return,
+            };
+            match slot.take() {
+                Some(mut child) => child.wait().ok().and_then(|s| s.code()),
+                None => None, // cancelled
+            }
+        };
+        if let Ok(mut running) = state.running.lock() {
+            *running = None;
+        }
+        let _ = app.emit(
+            "mole-task-done",
+            serde_json::json!({ "task": task, "code": code }),
+        );
+    });
+    Ok(())
+}
+
+#[tauri::command]
+fn cancel_mole_task(app: AppHandle) {
+    let state = app.state::<MoleTask>();
+    if let Ok(mut slot) = state.child.lock() {
+        if let Some(mut child) = slot.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+    if let Ok(mut running) = state.running.lock() {
+        *running = None;
+    };
 }
 
 /// Fan mode selection. Validated against a fixed allowlist; actual SMC
@@ -351,8 +543,13 @@ pub fn run() {
         .manage(Mutex::new(TrayState::default()))
         .manage(PanelHiddenAt::default())
         .manage(StatusStream::default())
+        .manage(MoleTask::default())
         .invoke_handler(tauri::generate_handler![
             mole_status,
+            mole_cli_path,
+            list_installed_apps,
+            run_mole_task,
+            cancel_mole_task,
             set_fan_mode,
             set_tray_config,
             show_main_window,

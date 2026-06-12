@@ -22,6 +22,7 @@ const (
 var (
 	gpuActiveResidencyRe = regexp.MustCompile(`GPU HW active residency:\s+([\d.]+)%`)
 	gpuIdleResidencyRe   = regexp.MustCompile(`GPU idle residency:\s+([\d.]+)%`)
+	deviceUtilizationRe  = regexp.MustCompile(`"Device Utilization %"\s*=\s*(\d+)`)
 )
 
 func (c *Collector) collectGPU(now time.Time) ([]GPUStatus, error) {
@@ -168,10 +169,11 @@ func getMacGPUUsage() float64 {
 	ctx, cancel := context.WithTimeout(context.Background(), powermetricsTimeout)
 	defer cancel()
 
-	// powermetrics may require root.
+	// powermetrics requires root; fail over to the IOAccelerator
+	// registry so unprivileged callers still get a usage number.
 	out, err := runCmd(ctx, "powermetrics", "--samplers", "gpu_power", "-i", "500", "-n", "1")
 	if err != nil {
-		return -1
+		return getIOAcceleratorUtilization()
 	}
 
 	// Parse "GPU HW active residency: X.XX%".
@@ -192,5 +194,25 @@ func getMacGPUUsage() float64 {
 		}
 	}
 
+	return getIOAcceleratorUtilization()
+}
+
+// getIOAcceleratorUtilization reads "Device Utilization %" from the
+// IOAccelerator registry entry. Unlike powermetrics it needs no root,
+// so unprivileged consumers (the GUI) still get a GPU reading.
+func getIOAcceleratorUtilization() float64 {
+	ctx, cancel := context.WithTimeout(context.Background(), powermetricsTimeout)
+	defer cancel()
+
+	out, err := runCmd(ctx, "ioreg", "-r", "-d", "1", "-w", "0", "-c", "IOAccelerator")
+	if err != nil {
+		return -1
+	}
+	matches := deviceUtilizationRe.FindStringSubmatch(out)
+	if len(matches) >= 2 {
+		if usage, err := strconv.ParseFloat(matches[1], 64); err == nil {
+			return usage
+		}
+	}
 	return -1
 }

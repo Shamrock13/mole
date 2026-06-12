@@ -46,7 +46,9 @@
     display: flex;
     align-items: center;
     gap: var(--space-2);
-    padding: var(--space-2) var(--space-3) var(--space-5);
+    /* Top padding clears the traffic lights, which the overlay
+       titlebar places over the sidebar's top-left corner. */
+    padding: 36px var(--space-3) var(--space-5);
     font-weight: var(--weight-bold);
     font-size: var(--text-md);
   }

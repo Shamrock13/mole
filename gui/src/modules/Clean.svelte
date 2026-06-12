@@ -1,73 +1,35 @@
 <script>
   // CLEAN — "Rainwater clears the soil."
-  // Ten cache categories sorted by safety tier. Every destructive
-  // action goes through a review sheet listing exact paths and byte
-  // counts; categories default to the conservative selection (only
-  // "safe" tier pre-checked). Protected system paths render as
-  // blocked rows that cannot be selected.
-  import { formatBytes } from "../lib/format.js";
+  // Runs the real `mo clean` pipeline and streams its output. The GUI
+  // never deletes anything itself: previews are `mo clean --dry-run`,
+  // and the actual clean is the same audited shell flow the terminal
+  // uses (whitelists, protected paths, operation log included).
+  import { onMount, onDestroy } from "svelte";
+  import { moleCliPath, createTaskRunner, inTauri } from "../lib/mole.js";
+  import TaskConsole from "../lib/components/TaskConsole.svelte";
+  import CliNotice from "../lib/components/CliNotice.svelte";
 
-  const TIERS = {
-    safe: { label: "Safe", color: "var(--ok)" },
-    review: { label: "Review", color: "var(--warn)" },
-    caution: { label: "Caution", color: "var(--danger)" },
-  };
+  const runner = createTaskRunner();
+  const { lines, running } = runner;
 
-  // Mock inventory shaped like `mo clean --dry-run` output. The Tauri
-  // backend will populate this from the real scanners.
-  let categories = $state([
-    cat("Xcode build products", "safe", [
-      f("~/Library/Developer/Xcode/DerivedData/MyApp-abcd", 4.2e9),
-      f("~/Library/Developer/Xcode/DerivedData/Tool-ef01", 1.9e9),
-    ]),
-    cat("Homebrew downloads", "safe", [f("~/Library/Caches/Homebrew/downloads", 1.4e9)]),
-    cat("npm / pnpm cache", "safe", [f("~/.npm/_cacache", 2.1e9)]),
-    cat("Browser temp files", "safe", [
-      f("~/Library/Caches/com.apple.Safari/WebKitCache", 6.4e8),
-      f("~/Library/Caches/Google/Chrome/Default/Cache", 8.9e8),
-    ]),
-    cat("System log archives", "safe", [f("~/Library/Logs/DiagnosticReports", 2.2e8)]),
-    cat("App caches (inactive apps)", "review", [
-      f("~/Library/Caches/com.spotify.client", 7.1e8),
-      f("~/Library/Caches/us.zoom.xos", 3.3e8),
-    ]),
-    cat("iOS device support", "review", [f("~/Library/Developer/Xcode/iOS DeviceSupport/17.5", 3.8e9)]),
-    cat("Old simulator runtimes", "review", [f("~/Library/Developer/CoreSimulator/Caches", 2.7e9)]),
-    cat("Mail attachment cache", "caution", [f("~/Library/Mail/V10/MailData/Attachments", 1.1e9)]),
-    cat("Time Machine local snapshots", "caution", [f("/Volumes/.timemachine (local snapshots)", 9.6e9)]),
-  ]);
-
-  // Path-refusal demo: anything Mole's should_protect_path() would
-  // reject is shown but visually blocked.
-  const blockedPaths = [
-    "/System/Library/Caches",
-    "/Library/Apple",
-  ];
-
+  let cliPath = $state(undefined); // undefined = checking, null = missing
   let confirming = $state(false);
+  let lastTask = $state(null);
 
-  function cat(name, tier, files) {
-    return {
-      name,
-      tier,
-      files: files.map((file) => ({ ...file, selected: tier === "safe" })),
-    };
+  onMount(async () => {
+    cliPath = inTauri() ? await moleCliPath() : null;
+  });
+  onDestroy(() => runner.destroy());
+
+  function preview() {
+    lastTask = "preview";
+    runner.start("clean-preview");
   }
-  function f(path, bytes) {
-    return { path, bytes };
-  }
 
-  let selected = $derived(
-    categories.flatMap((c) => c.files.filter((file) => file.selected))
-  );
-  let selectedBytes = $derived(selected.reduce((sum, file) => sum + file.bytes, 0));
-
-  let tierOrder = { safe: 0, review: 1, caution: 2 };
-  let sorted = $derived([...categories].sort((a, b) => tierOrder[a.tier] - tierOrder[b.tier]));
-
-  function runClean() {
-    // Hook point: invoke("mole_clean", { paths: selected.map(f => f.path) })
+  function cleanNow() {
     confirming = false;
+    lastTask = "clean";
+    runner.start("clean");
   }
 </script>
 
@@ -75,61 +37,38 @@
   <header class="page-head">
     <div>
       <h1 id="clean-title">Clean</h1>
-      <p class="subtitle">Review every path before anything is removed. Cache purges are permanent; safest tiers are pre-selected.</p>
+      <p class="subtitle">
+        Deep cleanup of caches, logs, and leftovers through Mole's safety
+        pipeline. Preview first; nothing is removed until you confirm.
+      </p>
     </div>
   </header>
 
-  {#each sorted as category (category.name)}
-    <article class="glass group" aria-label={category.name}>
-      <header class="group-head">
-        <h2>{category.name}</h2>
-        <span class="tier" style:color={TIERS[category.tier].color}>
-          {TIERS[category.tier].label}
-        </span>
-      </header>
-      <ul>
-        {#each category.files as file (file.path)}
-          <li>
-            <label>
-              <input type="checkbox" bind:checked={file.selected} />
-              <span class="path mono">{file.path}</span>
-              <span class="bytes mono">{formatBytes(file.bytes)}</span>
-            </label>
-          </li>
-        {/each}
-      </ul>
+  {#if cliPath === undefined}
+    <p class="checking">Checking for the Mole CLI…</p>
+  {:else if cliPath === null}
+    <CliNotice feature="Cleaning" />
+  {:else}
+    <article class="glass panel">
+      <div class="actions">
+        <button class="primary ghost" disabled={$running} onclick={preview}>
+          {$running && lastTask === "preview" ? "Previewing…" : "Preview (dry run)"}
+        </button>
+        <button class="primary" disabled={$running} onclick={() => (confirming = true)}>
+          Clean now…
+        </button>
+        {#if $running}
+          <button class="stop" onclick={() => runner.cancel()}>Stop</button>
+        {/if}
+      </div>
+      <p class="hint">
+        Runs <code class="mono">{cliPath}</code>. System-level caches need
+        admin rights and are skipped here; run
+        <code class="mono">sudo mo clean</code> in a terminal for those.
+      </p>
+      <TaskConsole lines={$lines} running={$running} />
     </article>
-  {/each}
-
-  <article class="glass group blocked-group" aria-label="Protected paths">
-    <header class="group-head">
-      <h2>Protected by Mole</h2>
-      <span class="tier" style:color="var(--danger)">Blocked</span>
-    </header>
-    <ul>
-      {#each blockedPaths as path (path)}
-        <li class="blocked">
-          <span aria-hidden="true">⌀</span>
-          <span class="path mono">{path}</span>
-          <span class="bytes">system-critical, never touched</span>
-        </li>
-      {/each}
-    </ul>
-  </article>
-
-  <footer class="actionbar glass-raised">
-    <p>
-      <strong class="mono">{selected.length}</strong> items ·
-      <strong class="mono">{formatBytes(selectedBytes)}</strong> reclaimable
-    </p>
-    <button
-      class="primary"
-      disabled={selected.length === 0}
-      onclick={() => (confirming = true)}
-    >
-      Review &amp; Clean…
-    </button>
-  </footer>
+  {/if}
 
   {#if confirming}
     <div class="scrim" role="presentation">
@@ -140,24 +79,16 @@
         aria-labelledby="confirm-title"
         aria-describedby="confirm-desc"
       >
-        <h2 id="confirm-title">Permanently remove {selected.length} items?</h2>
+        <h2 id="confirm-title">Run cleanup now?</h2>
         <p id="confirm-desc">
-          These caches are deleted permanently, not moved to Trash.
-          Exact paths and sizes:
+          This runs <code class="mono">mo clean</code>: user-level caches and
+          logs are removed permanently, honoring your whitelist and Mole's
+          protected paths. Every removal is recorded in the operation log
+          (<code class="mono">mo history</code>).
         </p>
-        <ul class="confirm-list glass-inset">
-          {#each selected as file (file.path)}
-            <li>
-              <span class="path mono">{file.path}</span>
-              <span class="bytes mono">{formatBytes(file.bytes)}</span>
-            </li>
-          {/each}
-        </ul>
         <div class="sheet-actions">
           <button onclick={() => (confirming = false)}>Cancel</button>
-          <button class="primary danger" onclick={runClean}>
-            Remove {formatBytes(selectedBytes)}
-          </button>
+          <button class="primary" onclick={cleanNow}>Clean</button>
         </div>
       </div>
     </div>
@@ -178,84 +109,48 @@
     margin-top: var(--space-1);
     max-width: 56ch;
   }
-  .group {
-    padding: var(--space-4);
-    margin-bottom: var(--space-3);
-  }
-  .group-head {
-    display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-    margin-bottom: var(--space-3);
-  }
-  .group-head h2 {
-    font-size: var(--text-md);
-    font-weight: var(--weight-semibold);
-  }
-  .tier {
-    font-size: var(--text-xs);
-    font-weight: var(--weight-semibold);
-    letter-spacing: var(--tracking-caps);
-    text-transform: uppercase;
-  }
-  ul {
-    list-style: none;
-    padding: 0;
-  }
-  li label {
-    display: grid;
-    grid-template-columns: auto 1fr auto;
-    gap: var(--space-3);
-    align-items: center;
-    padding: var(--space-2) var(--space-2);
-    border-radius: var(--radius-sm);
-    cursor: pointer;
-  }
-  li label:hover {
-    background: var(--glass-inset);
-  }
-  input[type="checkbox"] {
-    accent-color: var(--accent);
-  }
-  .path {
-    font-size: var(--text-xs);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .bytes {
-    font-size: var(--text-xs);
-    color: var(--ink-secondary);
-  }
-  .blocked {
-    display: grid;
-    grid-template-columns: auto 1fr auto;
-    gap: var(--space-3);
-    padding: var(--space-2);
+  .checking {
     color: var(--ink-tertiary);
+    font-size: var(--text-sm);
   }
-  .actionbar {
-    position: sticky;
-    bottom: 0;
+  .panel {
+    padding: var(--space-4);
+  }
+  .actions {
     display: flex;
-    justify-content: space-between;
+    gap: var(--space-3);
     align-items: center;
-    padding: var(--space-3) var(--space-4);
-    margin-top: var(--space-4);
   }
   .primary {
     background: var(--accent);
     color: #fff;
+    font-size: var(--text-sm);
     font-weight: var(--weight-semibold);
     padding: var(--space-2) var(--space-4);
     border-radius: var(--radius-pill);
+  }
+  .primary.ghost {
+    background: var(--accent-soft);
+    color: var(--accent);
   }
   .primary:disabled {
     opacity: 0.4;
     cursor: default;
   }
-  .primary.danger {
-    background: var(--danger);
+  .stop {
+    color: var(--danger);
+    font-size: var(--text-sm);
+    font-weight: var(--weight-semibold);
+    padding: var(--space-2) var(--space-3);
+  }
+  .hint {
+    margin-top: var(--space-3);
+    font-size: var(--text-xs);
+    color: var(--ink-tertiary);
+  }
+  .hint code {
+    user-select: text;
+    -webkit-user-select: text;
   }
   .scrim {
     position: fixed;
@@ -266,8 +161,7 @@
     z-index: 10;
   }
   .sheet {
-    width: min(560px, calc(100vw - 64px));
-    max-height: 70vh;
+    width: min(520px, calc(100vw - 64px));
     display: flex;
     flex-direction: column;
     gap: var(--space-3);
@@ -277,15 +171,9 @@
     font-size: var(--text-md);
     font-weight: var(--weight-semibold);
   }
-  .confirm-list {
-    overflow-y: auto;
-    padding: var(--space-3);
-  }
-  .confirm-list li {
-    display: flex;
-    justify-content: space-between;
-    gap: var(--space-3);
-    padding: var(--space-1) 0;
+  .sheet p {
+    font-size: var(--text-sm);
+    color: var(--ink-secondary);
   }
   .sheet-actions {
     display: flex;

@@ -1,76 +1,110 @@
 <script>
   // OPTIMIZE — "Closest orbit, swiftest run."
-  // Single-tap maintenance tasks mapped to lib/optimize/tasks.sh.
-  // Running tasks show the gentle pulse; nothing here deletes files.
-  const TASKS = [
-    { id: "quicklook", name: "Rebuild Quick Look", detail: "Reset thumbnail and preview generation" },
-    { id: "caches", name: "Repair caches & metadata", detail: "Spotlight, LaunchServices, dyld caches" },
-    { id: "login", name: "Audit login items", detail: "Find slow or orphaned startup entries" },
-    { id: "batch", name: "Batch admin workflow", detail: "Run all maintenance tasks in safe order" },
-  ];
+  // Streams `mo optimize --dry-run`: real health checks and the
+  // maintenance recommendations Mole would apply. Applying them stays
+  // in the terminal, where the interactive task picker (and sudo,
+  // when needed) lives.
+  import { onMount, onDestroy } from "svelte";
+  import { moleCliPath, createTaskRunner, inTauri } from "../lib/mole.js";
+  import TaskConsole from "../lib/components/TaskConsole.svelte";
+  import CliNotice from "../lib/components/CliNotice.svelte";
 
-  let running = $state({});
+  const runner = createTaskRunner();
+  const { lines, running } = runner;
 
-  function run(id) {
-    // Hook point: invoke("mole_optimize", { task: id })
-    running[id] = true;
-    setTimeout(() => (running[id] = false), 2600);
-  }
+  let cliPath = $state(undefined);
+
+  onMount(async () => {
+    cliPath = inTauri() ? await moleCliPath() : null;
+  });
+  onDestroy(() => runner.destroy());
 </script>
 
 <section aria-labelledby="optimize-title">
   <header class="page-head">
     <h1 id="optimize-title">Optimize</h1>
-    <p class="subtitle">Maintenance only. These tasks rebuild and repair; they never remove your data.</p>
+    <p class="subtitle">
+      System health checks and maintenance recommendations. The preview is
+      read-only; apply tasks with <code class="mono">mo optimize</code> in a
+      terminal.
+    </p>
   </header>
 
-  <div class="tasks">
-    {#each TASKS as task (task.id)}
-      <article class="glass task">
-        <div>
-          <h2>{task.name}</h2>
-          <p>{task.detail}</p>
-        </div>
-        <button
-          class="go"
-          class:pulse={running[task.id]}
-          disabled={running[task.id]}
-          onclick={() => run(task.id)}
-          aria-label={running[task.id] ? `${task.name} running` : `Run ${task.name}`}
-        >
-          {running[task.id] ? "Running" : "Run"}
+  {#if cliPath === undefined}
+    <p class="quiet">Checking for the Mole CLI…</p>
+  {:else if cliPath === null}
+    <CliNotice feature="Optimization" />
+  {:else}
+    <article class="glass panel">
+      <div class="actions">
+        <button class="primary" disabled={$running} onclick={() => runner.start("optimize-preview")}>
+          {$running ? "Checking…" : "Check system health"}
         </button>
-      </article>
-    {/each}
-  </div>
+        {#if $running}
+          <button class="stop" onclick={() => runner.cancel()}>Stop</button>
+        {/if}
+      </div>
+      <p class="hint">
+        Runs <code class="mono">mo optimize --dry-run</code>: nothing is
+        modified. Whitelist paths with
+        <code class="mono">mo optimize --whitelist</code>.
+      </p>
+      <TaskConsole lines={$lines} running={$running} />
+    </article>
+  {/if}
 </section>
 
 <style>
-  .page-head { margin-bottom: var(--space-5); }
-  h1 { font-size: var(--text-xl); font-weight: var(--weight-bold); }
-  .subtitle { font-size: var(--text-sm); color: var(--ink-secondary); margin-top: var(--space-1); }
-  .tasks {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-    gap: var(--space-4);
+  .page-head {
+    margin-bottom: var(--space-5);
   }
-  .task {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: var(--space-4);
+  h1 {
+    font-size: var(--text-xl);
+    font-weight: var(--weight-bold);
+  }
+  .subtitle {
+    font-size: var(--text-sm);
+    color: var(--ink-secondary);
+    margin-top: var(--space-1);
+    max-width: 56ch;
+  }
+  .quiet {
+    color: var(--ink-tertiary);
+    font-size: var(--text-sm);
+  }
+  .panel {
     padding: var(--space-4);
   }
-  .task h2 { font-size: var(--text-md); font-weight: var(--weight-semibold); }
-  .task p { font-size: var(--text-xs); color: var(--ink-secondary); margin-top: var(--space-1); }
-  .go {
+  .actions {
+    display: flex;
+    gap: var(--space-3);
+    align-items: center;
+  }
+  .primary {
     background: var(--accent);
     color: #fff;
-    font-size: var(--text-xs);
+    font-size: var(--text-sm);
     font-weight: var(--weight-semibold);
     padding: var(--space-2) var(--space-4);
     border-radius: var(--radius-pill);
-    flex-shrink: 0;
   }
-  .go:disabled { cursor: default; }
+  .primary:disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
+  .stop {
+    color: var(--danger);
+    font-size: var(--text-sm);
+    font-weight: var(--weight-semibold);
+    padding: var(--space-2) var(--space-3);
+  }
+  .hint {
+    margin-top: var(--space-3);
+    font-size: var(--text-xs);
+    color: var(--ink-tertiary);
+  }
+  .hint code {
+    user-select: text;
+    -webkit-user-select: text;
+  }
 </style>

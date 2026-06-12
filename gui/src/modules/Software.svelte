@@ -1,132 +1,238 @@
 <script>
   // SOFTWARE — "Red dust covers what you've outgrown."
-  // Shell view: update vectors (Sparkle / Homebrew / App Store),
-  // startup items, and an uninstall inspector that segregates each
-  // leftover class. Uninstalls route to Trash (recoverable).
-  const updates = [
-    { app: "iTerm2", from: "3.5.1", to: "3.5.4", vector: "Sparkle" },
-    { app: "ripgrep", from: "14.1.0", to: "14.1.1", vector: "Homebrew" },
-    { app: "Pixelmator Pro", from: "3.6.2", to: "3.6.4", vector: "App Store" },
-  ];
+  // Real installed-app inventory from `mo uninstall --list` (a
+  // guaranteed read-only path). Uninstalling stays in the terminal
+  // where Mole's interactive confirmation flow lives; each row shows
+  // the exact command.
+  import { onMount } from "svelte";
+  import { moleCliPath, listInstalledApps, inTauri } from "../lib/mole.js";
+  import CliNotice from "../lib/components/CliNotice.svelte";
 
-  const startup = [
-    { name: "Raycast", kind: "Login Item", enabled: true },
-    { name: "com.docker.vmnetd", kind: "Launch Daemon", enabled: true },
-    { name: "Adobe Updater", kind: "Launch Agent", enabled: false },
-  ];
+  let cliPath = $state(undefined);
+  let apps = $state([]);
+  let loading = $state(false);
+  let error = $state(null);
+  let query = $state("");
+  let expanded = $state(null);
 
-  let inspecting = $state(null);
+  let filtered = $derived(
+    query.trim()
+      ? apps.filter((app) =>
+          `${app.name} ${app.bundle_id}`.toLowerCase().includes(query.trim().toLowerCase())
+        )
+      : apps
+  );
 
-  const leftovers = {
-    app: "OldApp.app",
-    groups: [
-      { label: "Preferences", paths: ["~/Library/Preferences/com.oldapp.plist"] },
-      { label: "Support files", paths: ["~/Library/Application Support/OldApp"] },
-      { label: "Launch agents", paths: ["~/Library/LaunchAgents/com.oldapp.helper.plist"] },
-      { label: "Dock entries", paths: ["com.apple.dock persistent-apps"] },
-    ],
-    personalData: ["~/Documents/OldApp Exports (contains personal data, kept by default)"],
-  };
+  async function refresh() {
+    loading = true;
+    error = null;
+    try {
+      const list = await listInstalledApps();
+      apps = [...list].sort((a, b) => a.name.localeCompare(b.name));
+    } catch (e) {
+      error = String(e);
+    } finally {
+      loading = false;
+    }
+  }
+
+  onMount(async () => {
+    cliPath = inTauri() ? await moleCliPath() : null;
+    if (cliPath) refresh();
+  });
 </script>
 
 <section aria-labelledby="software-title">
   <header class="page-head">
-    <h1 id="software-title">Software</h1>
-    <p class="subtitle">Updates, startup items, and clean uninstalls. Removals go to Trash and are recoverable.</p>
-  </header>
-
-  <article class="glass group" aria-label="Available updates">
-    <h2 class="caption">Updates</h2>
-    <ul>
-      {#each updates as u (u.app)}
-        <li class="row">
-          <span class="name">{u.app}</span>
-          <span class="vector">{u.vector}</span>
-          <span class="ver mono">{u.from} → {u.to}</span>
-          <button class="pill">Update</button>
-        </li>
-      {/each}
-    </ul>
-  </article>
-
-  <article class="glass group" aria-label="Startup items">
-    <h2 class="caption">Startup items</h2>
-    <ul>
-      {#each startup as s (s.name)}
-        <li class="row">
-          <span class="name">{s.name}</span>
-          <span class="vector">{s.kind}</span>
-          <label class="switch">
-            <input type="checkbox" checked={s.enabled} aria-label={`${s.name} at login`} />
-            <span>{s.enabled ? "On" : "Off"}</span>
-          </label>
-        </li>
-      {/each}
-    </ul>
-  </article>
-
-  <article class="glass group" aria-label="Uninstall">
-    <h2 class="caption">Uninstall</h2>
-    <ul>
-      <li class="row">
-        <span class="name">{leftovers.app}</span>
-        <span class="vector">2.4 GB total</span>
-        <button class="pill" onclick={() => (inspecting = leftovers)}>Inspect…</button>
-      </li>
-    </ul>
-
-    {#if inspecting}
-      <div class="inspector glass-inset">
-        {#each inspecting.groups as group (group.label)}
-          <h3 class="caption">{group.label}</h3>
-          <ul class="paths">
-            {#each group.paths as path (path)}
-              <li class="mono">{path}</li>
-            {/each}
-          </ul>
-        {/each}
-        <h3 class="caption warn">Personal data — kept unless you opt in</h3>
-        <ul class="paths">
-          {#each inspecting.personalData as path (path)}
-            <li class="mono">{path}</li>
-          {/each}
-        </ul>
-        <p class="trash-note">Everything above moves to Trash, never deleted directly.</p>
+    <div>
+      <h1 id="software-title">Software</h1>
+      <p class="subtitle">
+        Every installed app with its size and source. Uninstall from the
+        terminal to keep Mole's interactive leftover review.
+      </p>
+    </div>
+    {#if cliPath}
+      <div class="tools">
+        <input
+          type="search"
+          placeholder="Search apps"
+          bind:value={query}
+          aria-label="Search installed apps"
+        />
+        <button class="pill" disabled={loading} onclick={refresh}>
+          {loading ? "Scanning…" : "Refresh"}
+        </button>
       </div>
     {/if}
-  </article>
+  </header>
+
+  {#if cliPath === undefined}
+    <p class="quiet">Checking for the Mole CLI…</p>
+  {:else if cliPath === null}
+    <CliNotice feature="The app inventory" />
+  {:else if error}
+    <article class="glass panel">
+      <p class="quiet">Could not list applications: {error}</p>
+    </article>
+  {:else if loading && apps.length === 0}
+    <p class="quiet">Scanning /Applications…</p>
+  {:else}
+    <article class="glass panel" aria-label="Installed applications">
+      <header class="list-head caption">
+        <span>{filtered.length} of {apps.length} apps</span>
+        <span>Size</span>
+      </header>
+      <ul>
+        {#each filtered as app (app.path)}
+          <li>
+            <button
+              class="row"
+              class:open={expanded === app.path}
+              onclick={() => (expanded = expanded === app.path ? null : app.path)}
+              aria-expanded={expanded === app.path}
+            >
+              <span class="name">{app.name}</span>
+              <span class="source" class:brew={app.source === "Homebrew"}>{app.source}</span>
+              <span class="size mono">{app.size}</span>
+            </button>
+            {#if expanded === app.path}
+              <div class="detail glass-inset">
+                {#if app.bundle_id}
+                  <p><span class="caption">Bundle</span> <span class="mono sel">{app.bundle_id}</span></p>
+                {/if}
+                <p><span class="caption">Path</span> <span class="mono sel">{app.path}</span></p>
+                <p>
+                  <span class="caption">Uninstall</span>
+                  <code class="mono sel">mo uninstall "{app.uninstall_name || app.name}"</code>
+                </p>
+              </div>
+            {/if}
+          </li>
+        {:else}
+          <li class="quiet empty">No apps match “{query}”.</li>
+        {/each}
+      </ul>
+    </article>
+  {/if}
 </section>
 
 <style>
-  .page-head { margin-bottom: var(--space-5); }
-  h1 { font-size: var(--text-xl); font-weight: var(--weight-bold); }
-  .subtitle { font-size: var(--text-sm); color: var(--ink-secondary); margin-top: var(--space-1); }
-  .group { padding: var(--space-4); margin-bottom: var(--space-3); }
-  .group h2 { margin-bottom: var(--space-3); }
-  ul { list-style: none; padding: 0; }
-  .row {
-    display: grid;
-    grid-template-columns: 1fr auto auto auto;
+  .page-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
     gap: var(--space-4);
-    align-items: center;
-    padding: var(--space-2);
-    border-radius: var(--radius-sm);
+    margin-bottom: var(--space-5);
   }
-  .row:hover { background: var(--glass-inset); }
-  .name { font-weight: var(--weight-medium); }
-  .vector, .ver { font-size: var(--text-xs); color: var(--ink-secondary); }
+  h1 {
+    font-size: var(--text-xl);
+    font-weight: var(--weight-bold);
+  }
+  .subtitle {
+    font-size: var(--text-sm);
+    color: var(--ink-secondary);
+    margin-top: var(--space-1);
+    max-width: 48ch;
+  }
+  .tools {
+    display: flex;
+    gap: var(--space-2);
+    align-items: center;
+    flex-shrink: 0;
+  }
+  input[type="search"] {
+    background: var(--glass-inset);
+    border: none;
+    border-radius: var(--radius-pill);
+    padding: var(--space-2) var(--space-3);
+    font: inherit;
+    font-size: var(--text-sm);
+    color: var(--ink-primary);
+    width: 200px;
+  }
   .pill {
     background: var(--accent-soft);
     color: var(--accent);
     font-size: var(--text-xs);
     font-weight: var(--weight-semibold);
-    padding: var(--space-1) var(--space-3);
+    padding: var(--space-2) var(--space-3);
     border-radius: var(--radius-pill);
   }
-  .switch { display: flex; gap: var(--space-2); font-size: var(--text-xs); align-items: center; }
-  .switch input { accent-color: var(--accent); }
-  .inspector { margin-top: var(--space-3); padding: var(--space-4); display: flex; flex-direction: column; gap: var(--space-2); }
-  .paths li { font-size: var(--text-xs); padding: var(--space-1) 0; color: var(--ink-secondary); }
-  .warn { color: var(--warn); }
-  .trash-note { font-size: var(--text-xs); color: var(--ink-tertiary); }
+  .pill:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+  .quiet {
+    color: var(--ink-tertiary);
+    font-size: var(--text-sm);
+  }
+  .panel {
+    padding: var(--space-4);
+  }
+  .list-head {
+    display: flex;
+    justify-content: space-between;
+    padding: 0 var(--space-2) var(--space-2);
+  }
+  ul {
+    list-style: none;
+    padding: 0;
+  }
+  .row {
+    display: grid;
+    grid-template-columns: 1fr auto 84px;
+    gap: var(--space-3);
+    align-items: center;
+    width: 100%;
+    text-align: left;
+    padding: var(--space-2);
+    border-radius: var(--radius-sm);
+  }
+  .row:hover,
+  .row.open {
+    background: var(--glass-inset);
+  }
+  .name {
+    font-weight: var(--weight-medium);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .source {
+    font-size: var(--text-xs);
+    color: var(--ink-tertiary);
+  }
+  .source.brew {
+    color: var(--accent);
+  }
+  .size {
+    font-size: var(--text-xs);
+    color: var(--ink-secondary);
+    text-align: right;
+  }
+  .detail {
+    margin: var(--space-1) var(--space-2) var(--space-2);
+    padding: var(--space-3);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+  .detail p {
+    display: flex;
+    gap: var(--space-3);
+    align-items: baseline;
+    font-size: var(--text-xs);
+  }
+  .detail .caption {
+    width: 72px;
+    flex-shrink: 0;
+  }
+  .sel {
+    user-select: text;
+    -webkit-user-select: text;
+    word-break: break-all;
+  }
+  .empty {
+    padding: var(--space-3);
+  }
 </style>
