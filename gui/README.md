@@ -61,13 +61,14 @@ npm run tauri:build  # release .app / .dmg
 DMG creation needs macOS (Tauri's bundler uses `hdiutil`). Two paths:
 
 - CI: run the "GUI DMG" workflow from the Actions tab (or
-  `gh workflow run gui-dmg.yml`). It builds a universal
-  (Apple Silicon + Intel) `Mole_x.y.z_universal.dmg` with a
-  `SHA256SUMS` file and uploads both as the `mole-gui-dmg` artifact.
-  Pushing a `GUI-V*` tag triggers the same build.
-- Locally on a Mac: `cd gui && npm ci && npm run tauri build -- \
-  --target universal-apple-darwin`. The image lands in
-  `src-tauri/target/universal-apple-darwin/release/bundle/dmg/`.
+  `gh workflow run gui-dmg.yml`). It builds an Apple Silicon
+  `Mole_x.y.z_aarch64.dmg` with a `SHA256SUMS` file and uploads both
+  as the `mole-gui-dmg` artifact. Pushing a `GUI-V*` tag triggers
+  the same build. To also cover Intel Macs, switch the build step to
+  `--target universal-apple-darwin` (roughly doubles compile time
+  and binary size; zero runtime cost on either architecture).
+- Locally on a Mac: `cd gui && npm ci && npm run tauri build`.
+  The image lands in `src-tauri/target/release/bundle/dmg/`.
 
 The app is not code-signed or notarized; first launch needs
 right-click → Open (or `xattr -dr com.apple.quarantine Mole.app`).

@@ -1,8 +1,12 @@
 name: GUI DMG
 
-# Builds the Tauri desktop GUI as a universal macOS .dmg.
-# Manual trigger only: run it from the Actions tab (or
-# `gh workflow run gui-dmg.yml`) and download the artifact.
+# Builds the Tauri desktop GUI as an Apple Silicon .dmg.
+# macos-latest runners are arm64, so this is a fast native build.
+# To also ship Intel, build with `--target universal-apple-darwin`
+# (and `rustup target add x86_64-apple-darwin`); it roughly doubles
+# compile time and binary size.
+# Run from the Actions tab (or `gh workflow run gui-dmg.yml`) and
+# download the artifact.
 on:
   workflow_dispatch:
   push:
@@ -14,7 +18,7 @@ permissions:
 
 jobs:
   build-dmg:
-    name: Build universal macOS DMG
+    name: Build Apple Silicon DMG
     runs-on: macos-latest
     steps:
       - name: Checkout code
@@ -28,9 +32,7 @@ jobs:
           cache-dependency-path: gui/package-lock.json
 
       - name: Set up Rust
-        run: |
-          rustup toolchain install stable --profile minimal
-          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+        run: rustup toolchain install stable --profile minimal
 
       - name: Cache cargo
         uses: actions/cache@6849a6489940f00c2f30c0fb92c6274307ccb58a # v4
@@ -45,14 +47,14 @@ jobs:
         working-directory: gui
         run: npm ci
 
-      - name: Build universal app and DMG
+      - name: Build app and DMG
         working-directory: gui
-        run: npm run tauri build -- --target universal-apple-darwin
+        run: npm run tauri build
 
       - name: Collect artifacts
         run: |
           mkdir -p out
-          cp gui/src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg out/
+          cp gui/src-tauri/target/release/bundle/dmg/*.dmg out/
           shasum -a 256 out/*.dmg > out/SHA256SUMS
           ls -la out
 
