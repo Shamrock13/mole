@@ -25,7 +25,7 @@ jobs:
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v4
 
       - name: Set up Node
-        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4
+        uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -41,7 +41,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             gui/src-tauri/target
-          key: gui-cargo-${{ runner.os }}-${{ hashFiles('gui/src-tauri/Cargo.toml') }}
+          key: gui-cargo-${{ runner.os }}-${{ hashFiles('gui/src-tauri/Cargo.lock') }}
 
       - name: Install frontend dependencies
         working-directory: gui

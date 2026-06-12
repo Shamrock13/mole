@@ -87,3 +87,6 @@ coverage.html
 session.json
 run_tests.ps1
 mole_guidelines.md
+
+# Tauri GUI is an application crate: its lockfile must be tracked
+!gui/src-tauri/Cargo.lock
