@@ -56,5 +56,23 @@ npm run tauri:dev    # full app (requires Rust + macOS)
 npm run tauri:build  # release .app / .dmg
 ```
 
-Icons are not checked in; generate them once with
-`npm run tauri icon path/to/mole-icon.png` before a release build.
+## Build the .dmg installer
+
+DMG creation needs macOS (Tauri's bundler uses `hdiutil`). Two paths:
+
+- CI: run the "GUI DMG" workflow from the Actions tab (or
+  `gh workflow run gui-dmg.yml`). It builds a universal
+  (Apple Silicon + Intel) `Mole_x.y.z_universal.dmg` with a
+  `SHA256SUMS` file and uploads both as the `mole-gui-dmg` artifact.
+  Pushing a `GUI-V*` tag triggers the same build.
+- Locally on a Mac: `cd gui && npm ci && npm run tauri build -- \
+  --target universal-apple-darwin`. The image lands in
+  `src-tauri/target/universal-apple-darwin/release/bundle/dmg/`.
+
+The app is not code-signed or notarized; first launch needs
+right-click → Open (or `xattr -dr com.apple.quarantine Mole.app`).
+Signing requires a Developer ID certificate wired into the workflow
+via Tauri's `APPLE_CERTIFICATE` / notarization secrets.
+
+App icons live in `src-tauri/icons/` (generated from `app-icon.png`
+with `npm run tauri icon app-icon.png`).

@@ -1,0 +1,64 @@
+name: GUI DMG
+
+# Builds the Tauri desktop GUI as a universal macOS .dmg.
+# Manual trigger only: run it from the Actions tab (or
+# `gh workflow run gui-dmg.yml`) and download the artifact.
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'GUI-V*'
+
+permissions:
+  contents: read
+
+jobs:
+  build-dmg:
+    name: Build universal macOS DMG
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v4
+
+      - name: Set up Node
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: gui/package-lock.json
+
+      - name: Set up Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
+      - name: Cache cargo
+        uses: actions/cache@6849a6489940f00c2f30c0fb92c6274307ccb58a # v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            gui/src-tauri/target
+          key: gui-cargo-${{ runner.os }}-${{ hashFiles('gui/src-tauri/Cargo.toml') }}
+
+      - name: Install frontend dependencies
+        working-directory: gui
+        run: npm ci
+
+      - name: Build universal app and DMG
+        working-directory: gui
+        run: npm run tauri build -- --target universal-apple-darwin
+
+      - name: Collect artifacts
+        run: |
+          mkdir -p out
+          cp gui/src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg out/
+          shasum -a 256 out/*.dmg > out/SHA256SUMS
+          ls -la out
+
+      - name: Upload DMG
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4
+        with:
+          name: mole-gui-dmg
+          path: out/
+          if-no-files-found: error
