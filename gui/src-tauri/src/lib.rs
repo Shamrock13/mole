@@ -92,7 +92,7 @@ fn bundled_status() -> Option<PathBuf> {
 /// (Bluetooth, Trash size, proxy), which cost seconds per cold run.
 fn collect_status_json() -> Result<String, String> {
     if let Some(bin) = bundled_status() {
-        if let Ok(out) = run_capture(bin.as_os_str(), &["--json", "--fast"]) {
+        if let Ok(out) = run_capture(bin.as_os_str(), &["--json", "--fast", "--top", "20"]) {
             return Ok(out);
         }
         // Fall through to a system install.
@@ -121,7 +121,7 @@ fn spawn_status_stream(app: AppHandle) {
         let stream = app.state::<StatusStream>();
         while !stream.shutdown.load(Ordering::Relaxed) {
             let spawned = Command::new(&bin)
-                .args(["--watch", "--interval", "2s"])
+                .args(["--watch", "--interval", "2s", "--top", "20"])
                 .stdout(Stdio::piped())
                 .stderr(Stdio::null())
                 .stdin(Stdio::null())
