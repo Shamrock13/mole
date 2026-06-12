@@ -28,10 +28,14 @@ Tauri 2 + Svelte 5 + Vite.
   shape. Sampling pauses while the window is hidden.
 - `src/modules/` - Status (fully functional), Clean, Software,
   Optimize, Analyze shells.
-- `src-tauri/` - thin Rust layer: `mole_status` shells out to the
-  existing `mo` binary; destructive logic intentionally stays in the
-  audited shell/Go core. macOS vibrancy is applied natively via
-  `window-vibrancy` so the glass panels sample the real desktop.
+- `src-tauri/` - thin Rust layer. The Go status collector
+  (`cmd/status`) is compiled by `scripts/build-sidecar.sh` and
+  bundled inside the app (Contents/MacOS/mole-status), so the DMG is
+  self-contained: Status shows real metrics with no separate CLI
+  install. A system-wide `mo` is used as fallback. Destructive logic
+  intentionally stays in the audited shell/Go core. macOS vibrancy is
+  applied natively via `window-vibrancy` so the glass panels sample
+  the real desktop.
 
 ## Behavioral guardrails encoded in the UI
 
@@ -52,9 +56,13 @@ Tauri 2 + Svelte 5 + Vite.
 cd gui
 npm install
 npm run dev          # browser preview with simulated metrics
-npm run tauri:dev    # full app (requires Rust + macOS)
+npm run tauri:dev    # full app (requires Rust + Go + macOS)
 npm run tauri:build  # release .app / .dmg
 ```
+
+`tauri:dev` and `tauri:build` first run `npm run sidecar`, which
+compiles `cmd/status` into `src-tauri/binaries/` for bundling, so Go
+must be installed alongside Rust.
 
 ## Build the .dmg installer
 

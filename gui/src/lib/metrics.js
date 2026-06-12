@@ -55,6 +55,7 @@ async function fetchMoleStatus() {
   return JSON.parse(raw);
 }
 
+// Field names follow cmd/status/metrics.go json tags exactly.
 function adaptMolePayload(state, j) {
   state.live = true;
   state.source = "mo status";
@@ -68,34 +69,40 @@ function adaptMolePayload(state, j) {
   const mem = j.memory ?? {};
   state.memory.total = mem.total ?? 0;
   state.memory.used = mem.used ?? 0;
-  state.memory.usedPercent = mem.total ? (mem.used / mem.total) * 100 : 0;
+  state.memory.usedPercent =
+    mem.used_percent ?? (mem.total ? (mem.used / mem.total) * 100 : 0);
 
   const gpu = Array.isArray(j.gpu) && j.gpu.length ? j.gpu[0] : null;
   state.gpu.usage = gpu?.usage ?? 0;
   state.gpu.name = gpu?.name ?? "GPU";
 
-  const disk = Array.isArray(j.disks) && j.disks.length ? j.disks[0] : null;
+  const disks = Array.isArray(j.disks) ? j.disks : [];
+  const disk = disks.find((d) => d.mount === "/") ?? disks[0];
   if (disk) {
     state.disk.total = disk.total ?? 0;
     state.disk.used = disk.used ?? 0;
-    state.disk.usedPercent = disk.total ? (disk.used / disk.total) * 100 : 0;
+    state.disk.usedPercent =
+      disk.used_percent ?? (disk.total ? (disk.used / disk.total) * 100 : 0);
   }
   state.disk.readRate = j.disk_io?.read_rate ?? 0;
   state.disk.writeRate = j.disk_io?.write_rate ?? 0;
 
-  const net = Array.isArray(j.network) && j.network.length ? j.network[0] : null;
-  state.network.rxRate = net?.rx_rate ?? net?.rx_rate_mbps ?? 0;
-  state.network.txRate = net?.tx_rate ?? net?.tx_rate_mbps ?? 0;
+  const nets = Array.isArray(j.network) ? j.network : [];
+  state.network.rxRate = nets.reduce((sum, n) => sum + (n.rx_rate_mbs ?? 0), 0);
+  state.network.txRate = nets.reduce((sum, n) => sum + (n.tx_rate_mbs ?? 0), 0);
 
   const bat = Array.isArray(j.batteries) && j.batteries.length ? j.batteries[0] : null;
-  state.battery.percent = bat?.percent ?? bat?.charge ?? null;
-  state.battery.charging = Boolean(bat?.charging);
-  state.battery.health = bat?.health ?? null;
+  state.battery.percent = bat?.percent ?? null;
+  // pmset status tokens: charging / discharging / charged / finishing
+  state.battery.charging = /^(charging|charged|finishing)/i.test(bat?.status ?? "");
+  state.battery.health = bat?.health || null;
 
-  state.thermal.cpuTemp = j.thermal?.cpu_temp ?? null;
-  state.thermal.pressure = j.thermal?.pressure ?? "nominal";
-  state.fans.supported = Boolean(j.thermal?.fan_supported ?? j.thermal?.fans?.length);
-  state.fans.rpm = j.thermal?.fans?.[0]?.rpm ?? 0;
+  const cpuTemp = j.thermal?.cpu_temp ?? 0;
+  state.thermal.cpuTemp = cpuTemp > 0 ? cpuTemp : null;
+  state.thermal.pressure =
+    cpuTemp >= 85 ? "serious" : cpuTemp >= 70 ? "warm" : "nominal";
+  state.fans.supported = (j.thermal?.fan_count ?? 0) > 0;
+  state.fans.rpm = j.thermal?.fan_speed ?? 0;
 
   state.topProcesses = (j.top_processes ?? []).slice(0, 6);
 }

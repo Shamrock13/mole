@@ -6,35 +6,50 @@
 //! remain in the shell/Go core where the safety contract
 //! (mole_delete, should_protect_path, operation logs) lives.
 
+use std::ffi::OsStr;
+use std::path::PathBuf;
 use std::process::Command;
 
 use tauri::Manager;
 
-/// Resolve the `mo` binary: PATH first, then the standard install spot.
-fn mo_binary() -> &'static str {
-    if Command::new("mo").arg("--version").output().is_ok() {
-        "mo"
-    } else {
-        "/usr/local/bin/mo"
-    }
-}
-
-/// Run `mo status --json` and hand the raw payload to the front-end.
-#[tauri::command]
-fn mole_status() -> Result<String, String> {
-    let output = Command::new(mo_binary())
-        .args(["status", "--json"])
+fn run_capture(program: &OsStr, args: &[&str]) -> Result<String, String> {
+    let output = Command::new(program)
+        .args(args)
         .output()
-        .map_err(|e| format!("failed to launch mo: {e}"))?;
+        .map_err(|e| format!("failed to launch {}: {e}", program.to_string_lossy()))?;
 
     if !output.status.success() {
         return Err(format!(
-            "mo status exited with {}",
+            "{} exited with {}",
+            program.to_string_lossy(),
             output.status.code().unwrap_or(-1)
         ));
     }
 
-    String::from_utf8(output.stdout).map_err(|e| format!("invalid utf8 from mo status: {e}"))
+    String::from_utf8(output.stdout).map_err(|e| format!("invalid utf8: {e}"))
+}
+
+/// The Go status collector bundled next to the app executable
+/// (Contents/MacOS/mole-status), shipped via Tauri's externalBin.
+fn bundled_status() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let path = exe.parent()?.join("mole-status");
+    path.is_file().then_some(path)
+}
+
+/// Status metrics for the front-end. The bundled collector makes the
+/// DMG self-contained; a system-wide `mo` install is the fallback so
+/// CLI users get identical data.
+#[tauri::command]
+fn mole_status() -> Result<String, String> {
+    if let Some(bin) = bundled_status() {
+        match run_capture(bin.as_os_str(), &["--json"]) {
+            Ok(out) => return Ok(out),
+            Err(_) => {} // fall through to a system install
+        }
+    }
+    run_capture(OsStr::new("mo"), &["status", "--json"])
+        .or_else(|_| run_capture(OsStr::new("/usr/local/bin/mo"), &["status", "--json"]))
 }
 
 /// Fan mode selection. Validated against a fixed allowlist; actual SMC
