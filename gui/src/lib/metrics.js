@@ -204,14 +204,24 @@ export const metrics = readable(emptyState(), (set) => {
     set({ ...state });
   }
 
+  // Polls never overlap: the next tick is scheduled only after the
+  // previous one resolves. A fixed setInterval piled up invokes when
+  // collection ran longer than the interval and froze the app.
+  let running = false;
+  async function loop() {
+    await tick();
+    if (running) timer = setTimeout(loop, TICK_MS);
+  }
+
   function start() {
-    if (timer) return;
-    tick();
-    timer = setInterval(tick, TICK_MS);
+    if (running) return;
+    running = true;
+    loop();
   }
 
   function stop() {
-    if (timer) clearInterval(timer);
+    running = false;
+    if (timer) clearTimeout(timer);
     timer = null;
   }
 

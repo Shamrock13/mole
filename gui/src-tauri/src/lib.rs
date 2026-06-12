@@ -37,19 +37,30 @@ fn bundled_status() -> Option<PathBuf> {
     path.is_file().then_some(path)
 }
 
-/// Status metrics for the front-end. The bundled collector makes the
-/// DMG self-contained; a system-wide `mo` install is the fallback so
-/// CLI users get identical data.
-#[tauri::command]
-fn mole_status() -> Result<String, String> {
+/// Status metrics. The bundled collector makes the DMG self-contained;
+/// a system-wide `mo` install is the fallback so CLI users get
+/// identical data. `--fast` skips collectors the GUI never reads
+/// (Bluetooth, Trash size, proxy), which cost seconds per cold run.
+fn collect_status_json() -> Result<String, String> {
     if let Some(bin) = bundled_status() {
-        match run_capture(bin.as_os_str(), &["--json"]) {
-            Ok(out) => return Ok(out),
-            Err(_) => {} // fall through to a system install
+        if let Ok(out) = run_capture(bin.as_os_str(), &["--json", "--fast"]) {
+            return Ok(out);
         }
+        // Fall through to a system install.
     }
     run_capture(OsStr::new("mo"), &["status", "--json"])
+        .or_else(|_| run_capture(OsStr::new("/opt/homebrew/bin/mo"), &["status", "--json"]))
         .or_else(|_| run_capture(OsStr::new("/usr/local/bin/mo"), &["status", "--json"]))
+}
+
+/// Async so collection runs off the main thread: a sync Tauri command
+/// executes on the UI thread, and the collector takes seconds per
+/// sample. That blocked the whole app behind a beachball.
+#[tauri::command]
+async fn mole_status() -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(collect_status_json)
+        .await
+        .map_err(|e| format!("status task failed: {e}"))?
 }
 
 /// Fan mode selection. Validated against a fixed allowlist; actual SMC

@@ -209,6 +209,12 @@ type BluetoothDevice struct {
 }
 
 type Collector struct {
+	// SkipAux drops auxiliary collectors (Bluetooth, Trash size,
+	// proxy) from full collection. One-shot JSON consumers like the
+	// GUI never read those fields, and Bluetooth alone costs seconds
+	// per cold process.
+	SkipAux bool
+
 	// Static cache.
 	cachedHW  HardwareInfo
 	lastHWAt  time.Time
@@ -382,27 +388,31 @@ func (c *Collector) collectFull() (MetricsSnapshot, error) {
 		func() (err error) { collected.cpuStats, err = collectCPU(); return },
 		func() (err error) { collected.memStats, err = collectMemory(); return },
 		func() (err error) { collected.diskStats, err = collectDisks(); return },
-		func() (err error) { collected.trashSize, collected.trashApprox = collectTrashSize(); return nil },
 		func() (err error) { collected.diskIO = c.collectDiskIO(now); return nil },
 		func() (err error) { collected.netStats = c.collectNetwork(now); return nil },
-		func() (err error) { collected.proxyStats = collectProxy(); return nil },
 		func() (err error) { collected.batteryStats, _ = collectBatteries(); return nil },
 		func() (err error) { collected.thermalStats = collectThermal(); return nil },
 		// Sensors disabled - CPU temp already shown in CPU card
 		// collect(func() (err error) { sensorStats, _ = collectSensors(); return nil })
 		func() (err error) { collected.gpuStats, err = c.collectGPU(now); return },
-		func() (err error) {
-			// Bluetooth is slow; cache for 30s.
-			if now.Sub(c.lastBTAt) > 30*time.Second || len(c.lastBT) == 0 {
-				collected.btStats = c.collectBluetooth(now)
-				c.lastBT = collected.btStats
-				c.lastBTAt = now
-			} else {
-				collected.btStats = c.lastBT
-			}
-			return nil
-		},
 		func() error { return collectProcessesInto(&collected) },
+	}
+	if !c.SkipAux {
+		tasks = append(tasks,
+			func() (err error) { collected.trashSize, collected.trashApprox = collectTrashSize(); return nil },
+			func() (err error) { collected.proxyStats = collectProxy(); return nil },
+			func() (err error) {
+				// Bluetooth is slow; cache for 30s.
+				if now.Sub(c.lastBTAt) > 30*time.Second || len(c.lastBT) == 0 {
+					collected.btStats = c.collectBluetooth(now)
+					c.lastBT = collected.btStats
+					c.lastBTAt = now
+				} else {
+					collected.btStats = c.lastBT
+				}
+				return nil
+			},
+		)
 	}
 	mergeErr := collectConcurrently(tasks...)
 
