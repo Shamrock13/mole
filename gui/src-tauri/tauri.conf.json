@@ -21,6 +21,20 @@
         "transparent": true,
         "titleBarStyle": "Overlay",
         "hiddenTitle": true
+      },
+      {
+        "label": "tray",
+        "title": "Mole Monitor",
+        "width": 380,
+        "height": 620,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visible": false,
+        "visibleOnAllWorkspaces": true,
+        "shadow": true
       }
     ],
     "security": {

@@ -5,6 +5,8 @@
   import Software from "./modules/Software.svelte";
   import Optimize from "./modules/Optimize.svelte";
   import Analyze from "./modules/Analyze.svelte";
+  import Settings from "./modules/Settings.svelte";
+  import { loadTrayConfig, applyTrayConfig } from "./lib/tray.js";
 
   const MODULES = [
     { id: "status", title: "Status", tagline: "Every heartbeat, in its light.", icon: "◉", component: Status },
@@ -12,7 +14,14 @@
     { id: "software", title: "Software", tagline: "Red dust covers what you've outgrown.", icon: "▦", component: Software },
     { id: "optimize", title: "Optimize", tagline: "Closest orbit, swiftest run.", icon: "◎", component: Optimize },
     { id: "analyze", title: "Analyze", tagline: "Widest eye, smallest folder on the map.", icon: "▤", component: Analyze },
+    { id: "settings", title: "Settings", tagline: "Small dials, steady burrow.", icon: "✦", component: Settings },
   ];
+
+  // The tray defaults live in Rust; push the user's persisted config
+  // as soon as the main window is up.
+  $effect(() => {
+    applyTrayConfig(loadTrayConfig()).catch(() => {});
+  });
 
   let current = $state("status");
   let CurrentView = $derived(MODULES.find((m) => m.id === current).component);
