@@ -70,10 +70,19 @@ DMG creation needs macOS (Tauri's bundler uses `hdiutil`). Two paths:
 - Locally on a Mac: `cd gui && npm ci && npm run tauri build`.
   The image lands in `src-tauri/target/release/bundle/dmg/`.
 
-The app is not code-signed or notarized; first launch needs
-right-click → Open (or `xattr -dr com.apple.quarantine Mole.app`).
-Signing requires a Developer ID certificate wired into the workflow
-via Tauri's `APPLE_CERTIFICATE` / notarization secrets.
+The bundle is ad-hoc signed (`signingIdentity: "-"`) but not
+notarized, so a browser-downloaded copy is quarantined and Gatekeeper
+blocks the first launch ("damaged" or "Apple could not verify").
+Right-click → Open does not bypass this on recent macOS. Either:
+
+```bash
+xattr -cr /Applications/Mole.app
+```
+
+or attempt the launch once, then approve it under System Settings →
+Privacy & Security → "Open Anyway". Proper signing requires a
+Developer ID certificate wired into the workflow via Tauri's
+`APPLE_CERTIFICATE` / notarization secrets.
 
 App icons live in `src-tauri/icons/` (generated from `app-icon.png`
 with `npm run tauri icon app-icon.png`).

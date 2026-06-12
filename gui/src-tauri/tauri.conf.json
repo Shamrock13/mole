@@ -39,6 +39,7 @@
     ],
     "macOS": {
       "minimumSystemVersion": "11.0",
+      "signingIdentity": "-",
       "dmg": {
         "windowSize": { "width": 600, "height": 400 },
         "appPosition": { "x": 160, "y": 190 },
