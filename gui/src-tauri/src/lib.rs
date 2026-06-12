@@ -10,7 +10,7 @@ use std::ffi::OsStr;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -34,6 +34,13 @@ impl Default for TrayState {
         }
     }
 }
+
+/// When the popover last hid because it lost focus. Clicking the tray
+/// icon while the popover is open blurs it (mousedown) before the
+/// click event lands (mouseup); without this guard that click would
+/// instantly reopen the panel and it could never be toggled closed.
+#[derive(Default)]
+struct PanelHiddenAt(Mutex<Option<Instant>>);
 
 fn run_capture(program: &OsStr, args: &[&str]) -> Result<String, String> {
     let output = Command::new(program)
@@ -163,6 +170,16 @@ fn toggle_tray_panel(app: &AppHandle, rect: tauri::Rect) {
         let _ = panel.hide();
         return;
     }
+    let recently_blurred = app
+        .state::<PanelHiddenAt>()
+        .0
+        .lock()
+        .ok()
+        .and_then(|t| *t)
+        .is_some_and(|t| t.elapsed() < Duration::from_millis(300));
+    if recently_blurred {
+        return;
+    }
 
     let scale = panel.scale_factor().unwrap_or(1.0);
     let (icon_x, icon_y, icon_w, icon_h) = rect_to_physical(&rect, scale);
@@ -242,6 +259,7 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
 pub fn run() {
     tauri::Builder::default()
         .manage(Mutex::new(TrayState::default()))
+        .manage(PanelHiddenAt::default())
         .invoke_handler(tauri::generate_handler![
             mole_status,
             set_fan_mode,
@@ -300,6 +318,9 @@ pub fn run() {
                 panel.on_window_event(move |event| {
                     if let WindowEvent::Focused(false) = event {
                         let _ = panel_handle.hide();
+                        if let Ok(mut hidden_at) = panel_handle.state::<PanelHiddenAt>().0.lock() {
+                            *hidden_at = Some(Instant::now());
+                        }
                     }
                 });
             }
